@@ -1,3 +1,3 @@
 # Novo
 
-Krivo je more
+Krivo je more, Ti si ga
