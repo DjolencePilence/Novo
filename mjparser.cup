@@ -1,0 +1,580 @@
+package rs.ac.bg.etf.pp1;
+import java_cup.runtime.*;
+//import java.io.*;
+import org.apache.log4j.*;
+import java.util.Stack;
+import rs.etf.pp1.symboltable.Tab;
+import rs.etf.pp1.symboltable.concepts.*;
+
+parser code {:
+	
+	int numGlobVar = 0;
+	int numGlobConst = 0;
+	int numGlobArrays = 0;
+	int numLocalVar = 0;
+	int printCallCount = 0;
+	int numFuncCallsInMain = 0;
+	int numFormParam = 0;
+	int numGlobFunc = 0;
+	int numStaticFunc = 0;
+	
+	boolean insideOfClass = false;
+	boolean isStaticFunc = false;
+	
+	Stack<String> stack = new Stack<String>();
+	
+	Logger log = Logger.getLogger(getClass());
+   
+   
+    // slede redefinisani metodi za prijavu gresaka radi izmene teksta poruke
+     
+    public void report_fatal_error(String message, Object info) throws java.lang.Exception {
+      done_parsing();
+      report_error(message, info);
+    }
+  
+    public void syntax_error(Symbol cur_token) {
+        report_error("\nSintaksna greska", cur_token);
+    }
+  
+    public void unrecovered_syntax_error(Symbol cur_token) throws java.lang.Exception {
+        report_fatal_error("Fatalna greska, parsiranje se ne moze nastaviti", cur_token);
+    }
+
+    public void report_error(String message, Object info) {
+    	StringBuilder msg = new StringBuilder(message); 
+    	if (info instanceof Symbol)
+            msg.append (" na liniji ").append(((Symbol)info).left);
+        log.error(msg.toString());
+    }
+    
+    public void report_info(String message, Object info) {
+    	StringBuilder msg = new StringBuilder(message); 
+    	if (info instanceof Symbol)
+            msg.append (" na liniji ").append(((Symbol)info).left);
+        log.info(msg.toString());
+    }
+:}
+
+scan with {:
+	Symbol s = this.getScanner().next_token();
+	if (s != null && s.value != null) 
+		log.info(s.toString() + " " + s.value.toString());
+	return s;
+:}
+
+init with {:
+	stack.push("global");
+	Tab.init();
+:}
+
+action code {:
+	Struct typeName = null;
+	String varIdent = null;
+	String constIdent = null;
+	int numLine = 0;
+	
+	Struct returnValue = null;
+	Obj currentMethod = null;
+:}
+
+
+terminal Integer NUMBER;
+terminal String IDENT;
+terminal PROG, PRINT, RETURN, EXTENDS, NEW, ELSE, IF, FOR, STATIC, CONST, BREAK, READ, CLASS, CONTINUE, CHAR, BOOL;
+terminal PLUS, EQUAL, COMMA, SEMI, LPAREN, RPAREN, LBRACE, RBRACE, LZAG, RZAG, MINUS, MULTIPLY, DIVIDE, PLUSEQUAL, MINUSEQUAL;
+terminal MULTIPLYEQUAL, DIVIDEEQUAL, MOD, EE, NOTEQUAL, LESS, LESSEQUAL, GREATER, GREATEREQUAL, ME, AND, OR, PLUSPLUS, MINUSMINUS;
+terminal POINT, VOID;
+non terminal Program, DeclarationList, Declaration, ConstDecl, VarDecl, MethodDecl, MethodDeclList, ConstType, ConstDeclArray;
+non terminal VarDeclZag, VarDeclArray, ClassDecl, ClassExtends, VarDeclListOptional, MethodDeclListOptional, StaticOptional;
+non terminal VarDeclList, FormalParamList, FormalParam, StatementList, Statement, DesignatorStatement, Designator;
+non terminal Condition, DesignatorStatementOptional, ConditionOptional, Expr, ActParsList, ActPars;
+non terminal CondTerm, CondFact, CondFactList, CondTermList, Assignop, AddopLeft, AddopRight, MulopLeft, MulopRight, Relop;
+non terminal RelExprOptional, Addop, Mulop, MulopList, AddopList, Term, Factor, FactorExprOptional, DesignatorList, DeclarationListOptional ;
+non terminal ClassVarDeclListOptional, ClassVarDeclList, ClassVarDeclArray, ClassVarDecl;
+non terminal VarArgs, Parameters;
+non terminal DesignatorListElement;
+non terminal GlobVarDecl, GlobVarDeclZag, GlobVarDeclArray;
+non terminal Obj ProgName;
+non terminal Struct Type;
+non terminal GlobVarTypeAndName;
+non terminal VariableName;
+non terminal ConstName, TypeOfConstant;
+non terminal Struct RetValue;
+non terminal LocalVarType;
+
+precedence left ELSE;
+
+Program ::= PROG ProgName:p DeclarationListOptional LBRACE MethodDeclList RBRACE
+{:
+	Tab.chainLocalSymbols(p);
+	Tab.closeScope();
+:};
+
+ProgName ::= IDENT:pName
+{:
+	RESULT = Tab.insert(Obj.Prog, pName, Tab.noType);
+	Tab.openScope();
+:};
+
+DeclarationListOptional ::= DeclarationList
+							|
+							/* */
+							;
+
+DeclarationList ::= Declaration DeclarationList
+					|
+					Declaration;
+					
+Declaration ::=	ConstDecl
+				|
+				GlobVarDecl
+				|
+				ClassDecl
+				;
+
+// Deklaracija KONSTANTI
+		
+ConstType ::= BOOL
+			  |
+			  NUMBER
+			  |
+			  CHAR;
+		
+ConstDeclArray ::= COMMA ConstName EQUAL ConstType ConstDeclArray
+				 |
+				 COMMA ConstName EQUAL ConstType SEMI; 
+
+TypeOfConstant ::= Type:constType
+{:
+	typeName = constType;
+:};
+
+ConstName ::= IDENT:constName
+{:	
+	parser.numGlobConst++;
+	constIdent = constName;
+	numLine = constNameleft;
+	parser.report_info("Definisana konstanta " + constIdent+ " na liniji " + numLine, null);
+	Tab.insert(Obj.Con, constIdent, typeName);
+	
+:};
+	
+ConstDecl ::= CONST	TypeOfConstant ConstName EQUAL ConstType SEMI
+			  |
+			  CONST	TypeOfConstant ConstName EQUAL ConstType ConstDeclArray;  
+
+//Kraj deklaracije KONSTANTI
+
+// GLOBAL VARIABLES AND ARRAYS START ------------------------------------------
+
+GlobVarDeclZag ::= LZAG RZAG
+					{:  parser.numGlobArrays++; parser.numGlobVar++;
+					
+						parser.report_info("Deklarisana globalna promenljiva " + varIdent+ " na liniji " + numLine, null);
+						Tab.insert(Obj.Var, varIdent, typeName);
+					
+					:}
+					|
+					/*epsilon*/ 
+					{:  parser.numGlobVar++;
+					
+						parser.report_info("Deklarisana globalna promenljiva " + varIdent+ " na liniji " + numLine, null);
+						Tab.insert(Obj.Var, varIdent, typeName);
+					:}
+					;
+					
+VariableName ::= IDENT:varName
+{:
+	numLine = varNameleft;
+	varIdent = varName;
+:};
+					
+GlobVarDeclArray ::= COMMA VariableName GlobVarDeclZag GlobVarDeclArray
+					 |
+					 COMMA error GlobVarDeclArray
+					 |
+					 COMMA VariableName  GlobVarDeclZag SEMI
+					 |
+					 COMMA error SEMI;
+
+GlobVarTypeAndName ::= Type:varType IDENT:varName
+{:
+					varIdent = varName;
+					typeName = varType;
+					numLine = varNameleft;
+:};
+
+				 		  
+GlobVarDecl ::= GlobVarTypeAndName GlobVarDeclZag SEMI
+				|
+				error SEMI
+				|
+				GlobVarTypeAndName GlobVarDeclZag GlobVarDeclArray
+				;
+
+
+// GLOBAL VARIABLES AND ARRAYS END ------------------------------------------
+
+//LOCAL VARIABLES -----------------------------------------------------------
+
+LocalVarType ::= Type:varType 
+{:
+	typeName = varType;
+:};
+
+VarDeclZag ::= LZAG RZAG
+				{: if("main".equals(parser.stack.peek())) parser.numLocalVar++; 
+				
+					parser.report_info("Deklarisana lokalna promenljiva " + varIdent+ " na liniji " + numLine, null);
+					Tab.insert(Obj.Var, varIdent, typeName);
+				:}
+				|
+				/*epsilon*/
+				{: if("main".equals(parser.stack.peek())) parser.numLocalVar++; 
+				
+					parser.report_info("Deklarisana lokalna promenljiva " + varIdent+ " na liniji " + numLine, null);
+					Tab.insert(Obj.Var, varIdent, typeName);
+				:}
+				;
+				
+VarDeclArray ::= COMMA VariableName VarDeclZag VarDeclArray
+				 |
+				 COMMA VariableName VarDeclZag SEMI;
+				 		  
+VarDecl ::= LocalVarType VariableName VarDeclZag SEMI
+			|
+			error SEMI
+			|
+			error
+			|
+			LocalVarType VariableName VarDeclZag VarDeclArray;
+
+VarDeclList ::= VarDeclList VarDecl
+				|
+				VarDecl;
+
+VarDeclListOptional ::= VarDeclList
+					|
+					/*epsilon*/
+					;
+// LOCAL VARIABLES END ---------------------------------------------------
+
+// CLASSES START ---------------------------------------------------------
+			
+ClassExtends ::= EXTENDS Type
+				 |
+				 /* epsilon */
+				 ;
+// MODIFIKACIJA 1    JUL
+ClassVarDeclListOptional ::= ClassVarDeclList
+							|
+							/*epsilon */
+							;
+ClassVarDeclList ::= ClassVarDecl ClassVarDeclArray
+					 |
+					 ClassVarDecl
+					 ;
+ClassVarDeclArray ::= COMMA IDENT VarDeclZag ClassVarDeclArray
+					  |
+					  COMMA IDENT VarDeclZag SEMI;
+					  
+ClassVarDecl ::= StaticOptional Type IDENT VarDeclZag;
+							
+ClassDecl ::= CLASS{: parser.insideOfClass=true; :} IDENT ClassExtends LBRACE ClassVarDeclListOptional MethodDeclListOptional RBRACE
+				   {: parser.insideOfClass = false; :};
+
+MethodDeclListOptional ::= LBRACE MethodDeclList RBRACE
+						|
+					   /*epsilon */
+					   ;
+					   							
+
+
+MethodDeclList ::= MethodDeclList MethodDecl
+					|
+				   MethodDecl
+				   ;
+				   
+StaticOptional ::= STATIC
+				   {: parser.isStaticFunc=true; :}
+				   |
+				   /*epsilon */
+				   {: parser.isStaticFunc=false; :}
+				   ;
+RetValue ::= VOID {: RESULT = null; :}
+			|
+			Type {: RESULT = returnValue; :};
+
+//FormPars ::= FormalParamList
+//			|
+//			/*epsilon*/
+//			;
+			
+FormalParamList ::= FormalParamList COMMA FormalParam
+					{:parser.numFormParam++; :}
+					|
+					FormalParam
+					{:parser.numFormParam++; :}
+					;
+
+FormalParam ::= Type IDENT VarDeclZag
+				|
+				error;
+ 							
+VarArgs ::= Type POINT POINT POINT IDENT;
+
+Parameters ::= FormalParamList COMMA VarArgs
+			   |
+			   VarArgs
+			   |
+			   FormalParamList
+			   |
+			   /*epsilon */
+			  	;
+MethodDecl ::= StaticOptional RetValue:retVal IDENT:name
+			   {:	if(parser.isStaticFunc && parser.insideOfClass) parser.numStaticFunc++;
+			   
+			   		if(retVal == null)
+			   			currentMethod = Tab.insert(Obj.Meth, name, Tab.noType );
+			   		else
+			   			currentMethod = Tab.insert(Obj.Meth, name, retVal);
+			   		returnValue = null;
+			   		Tab.openScope();
+			   		parser.report_info("Obradjuje se funkcija "+name+" na liniji "+nameleft,null);
+			   :}
+			  LPAREN Parameters RPAREN {: if("main".equals(name)) parser.stack.push("main"); else parser.stack.push("local"); :} VarDeclListOptional
+			   {:   :}LBRACE StatementList RBRACE
+			   {:	if("global".equals(parser.stack.peek()) || "main".equals(parser.stack.peek())) parser.numGlobFunc++;
+			   		parser.stack.pop();
+					Tab.chainLocalSymbols(currentMethod);
+					Tab.closeScope();			   	
+			   :};
+
+// CLASSES END -------------------------------------------------------
+				
+StatementList ::= StatementList Statement
+				 |
+				 /* */
+				 ;
+
+Type ::= IDENT:typeName
+{:
+	Obj typeNode = Tab.find(typeName);
+	if(typeNode ==Tab.noObj){
+		parser.report_error("Nije pronadjen tip " + typeName + " u tabeli simbola ", null );
+		RESULT = Tab.noType;
+	}
+	else{
+		if(Obj.Type == typeNode.getKind()){
+		returnValue = typeNode.getType();
+		RESULT = typeNode.getType();
+		}
+		else {
+		parser.report_error("Greska na liniji "+ typeNameleft +  ":Ime " + typeName + " ne predstavlja ime", null);
+		RESULT = Tab.noType;
+		}
+		
+	}
+	
+:}
+;
+
+
+ConditionOptional ::= Condition 
+					 |
+					 error
+					 |
+					 /* */
+					 ;
+					 
+DesignatorStatementOptional ::= DesignatorStatement
+								|
+								error
+								|
+								/* */
+								;
+
+Statement ::= DesignatorStatement SEMI
+			  |
+			  IF LPAREN Condition RPAREN Statement ELSE Statement
+			  |
+			  IF LPAREN error RPAREN Statement ELSE Statement
+			  |
+			  IF LPAREN Condition RPAREN Statement
+			  |
+			  IF LPAREN error RPAREN Statement
+			  |
+			  FOR LPAREN DesignatorStatementOptional SEMI ConditionOptional SEMI DesignatorStatementOptional  RPAREN Statement
+			  |
+			  BREAK SEMI
+			  |
+			  CONTINUE SEMI
+			  |
+			  RETURN Expr SEMI
+			  |
+			  RETURN SEMI
+			  |
+			  READ LPAREN Designator RPAREN SEMI
+			  {:if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;:}
+			  |
+			  PRINT LPAREN Expr RPAREN SEMI
+			  {:if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;:}
+			  |
+			  PRINT LPAREN Expr COMMA NUMBER RPAREN SEMI
+			  {:if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;:}
+			  |
+			  LBRACE StatementList RBRACE;
+
+ActPars ::= ActParsList
+			{: if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++; :}
+			|
+			/* */
+			{: if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++; :}
+			;
+ActParsList ::= ActParsList COMMA Expr
+				|
+				Expr;
+
+
+// Dodavanje zbog greske prilikom dodele			  
+ DesignatorStatement ::= Designator Assignop Expr
+ 						|
+ 						Designator Assignop error
+ 						|
+ 						 Designator LPAREN ActPars RPAREN
+ 						|
+ 						 Designator PLUSPLUS
+ 						|
+ 						 Designator MINUSMINUS;
+ 
+ RelExprOptional ::= Relop Expr
+ 					|
+ 					 /* */
+ 					;
+ 
+ AddopList ::= AddopList Addop Term
+ 				|
+ 			   /* */
+ 			   ;
+
+Term ::= Factor MulopList;
+
+MulopList ::= MulopList Mulop Factor
+			 |
+			  /* */
+			  ;
+
+FactorExprOptional ::= LZAG Expr RZAG
+					   |
+					   /* */
+					   ;
+
+Factor ::= Designator
+			| 
+		   Designator LPAREN ActPars RPAREN
+			|
+		   NUMBER
+		   |
+		   CHAR
+		   |
+		   BOOL
+		   |
+		   NEW Type FactorExprOptional
+		   |
+		   LPAREN Expr RPAREN;
+
+DesignatorListElement ::= POINT IDENT
+						   |
+						  LZAG Expr RZAG;
+
+DesignatorList ::=  DesignatorList DesignatorListElement
+					|
+					DesignatorListElement;
+					
+
+//DesignatorList ::= POINT IDENT DesignatorList
+//				   |
+//				   LZAG Expr RZAG DesignatorList
+//				   |
+//				   /* */
+//				   ;
+
+Designator ::= IDENT DesignatorList
+				|
+			   IDENT;
+
+
+
+ 
+Expr ::= MINUS Term AddopList
+ 		  |
+ 		  Term AddopList;
+ 
+ CondFact ::= Expr RelExprOptional;
+ 
+ 
+ CondFactList ::= CondFact
+ 				  |
+ 				  CondFact AND CondFactList;
+ 
+ CondTerm ::= CondFactList;
+ 
+ CondTermList::= CondTerm
+ 				 |
+ 				 CondTerm OR CondTermList;
+ 
+ Condition ::= CondTermList;
+ 
+ 
+ Assignop ::= EQUAL
+ 			  |
+ 			  AddopRight
+ 			  |
+ 			  MulopRight;
+ 
+ AddopRight ::= PLUSEQUAL
+ 				|
+ 				MINUSEQUAL;
+ 				
+ MulopRight ::= MULTIPLYEQUAL
+ 				|
+ 				DIVIDEEQUAL
+ 				|
+ 				ME;
+ 
+ Addop ::= AddopRight
+ 			|
+ 		   AddopLeft;
+ 
+ AddopLeft ::= PLUS
+ 				|
+ 			   MINUS;
+ 			   
+ Mulop ::= MulopLeft
+ 		   |
+ 		   MulopRight;
+ 		   
+ MulopLeft ::= MULTIPLY
+ 			   |
+ 			   DIVIDE
+ 			   |
+ 			   MOD;
+ 			   
+ Relop ::= EE
+ 		   |
+ 		   NOTEQUAL
+ 		   |
+ 		   LESS
+ 		   |
+ 		   LESSEQUAL
+ 		   |
+ 		   GREATER
+ 		   |
+ 		   GREATEREQUAL;
+ 		   
+ 				
+ 
+ 			  
+
+			
