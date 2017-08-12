@@ -129,12 +129,12 @@ action code {:
 :}
 
 
-terminal Integer NUMBER;
+terminal Integer NUMBER, EQUAL;
 terminal String IDENT;
 terminal Character CHAR;
 terminal Boolean BOOL;
 terminal PROG, PRINT, RETURN, EXTENDS, NEW, ELSE, IF, FOR, STATIC, CONST, BREAK, READ, CLASS, CONTINUE;
-terminal PLUS, EQUAL, COMMA, SEMI, LPAREN, RPAREN, LBRACE, RBRACE, LZAG, RZAG, MINUS, MULTIPLY, DIVIDE, PLUSEQUAL, MINUSEQUAL;
+terminal PLUS, COMMA, SEMI, LPAREN, RPAREN, LBRACE, RBRACE, LZAG, RZAG, MINUS, MULTIPLY, DIVIDE, PLUSEQUAL, MINUSEQUAL;
 terminal MULTIPLYEQUAL, DIVIDEEQUAL, MOD, EE, NOTEQUAL, LESS, LESSEQUAL, GREATER, GREATEREQUAL, ME, AND, OR, PLUSPLUS, MINUSMINUS;
 terminal POINT, VOID;
 
@@ -143,10 +143,9 @@ non terminal VarDeclZag, VarDeclArray, ClassDecl, ClassExtends, VarDeclListOptio
 non terminal VarDeclList, FormalParamList, FormalParam, StatementList, Statement, DesignatorStatement;
 non terminal Condition, DesignatorStatementOptional, ConditionOptional, ActParsList, ActPars;
 non terminal CondTerm, CondFact, CondFactList, CondTermList,  Relop;
-non terminal RelExprOptional,  FactorExprOptional, DesignatorList, DeclarationListOptional ;
+non terminal RelExprOptional, DeclarationListOptional ;
 non terminal ClassVarDeclListOptional, ClassVarDeclList, ClassVarDeclArray, ClassVarDecl;
 non terminal VarArgs, Parameters;
-non terminal DesignatorListElement;
 non terminal GlobVarDecl, GlobVarDeclZag, GlobVarDeclArray;
 non terminal Obj ProgName;
 non terminal Struct Type;
@@ -156,7 +155,7 @@ non terminal ConstName, TypeOfConstant;
 non terminal Struct RetValue;
 non terminal LocalVarType;
 non terminal FormVarDeclZag;
-non terminal Obj Designator;
+non terminal Obj Designator, DesignatorList, DesignatorListElement;
 non terminal Struct  Expr, Factor, Term;
 non terminal Struct FactorExpr, FactorExprLeft;
 non terminal Struct SubExpr, SubExprLeft;
@@ -607,8 +606,22 @@ Statement ::= DesignatorStatement SEMI
 			  		
 			  :}
 			  |
-			  PRINT LPAREN Expr COMMA NUMBER RPAREN SEMI
-			  {:if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;:}
+			  PRINT LPAREN Expr:e COMMA NUMBER:n RPAREN SEMI
+			  {:
+			  		if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;
+			  		if (e != Tab.intType && e != Tab.charType && e!=parser.boolType)
+			  	 		parser.report_error("Semanticka greska na liniji " + eleft + ": Operand instrukcije PRINT mora biti char, bool ili int tipa", null);
+				  	 
+				  	 if (e == Tab.intType || e==parser.boolType) {
+				  	 	Code.loadConst(n.intValue());
+				  	 	Code.put(Code.print);
+				  	 }
+				  	 
+				  	 if (e == Tab.charType) {
+				  	 	Code.loadConst(n.intValue());
+				  	 	Code.put(Code.bprint);
+				  	 }
+			  :}
 			  |
 			  LBRACE StatementList RBRACE;
 
@@ -624,21 +637,37 @@ ActParsList ::= ActParsList COMMA Expr
 
 
 // Dodavanje zbog greske prilikom dodele			  
- DesignatorStatement ::= Designator:d Assignop:assignLine Expr:e
+ DesignatorStatement ::= Designator:d Assignop:assignOp
+ 						{:	
+ 						:}
+ 						 Expr:e
  						{: 
 	 						if(d!=Tab.noObj && e!=null){
+	 							if(d.getKind()!=Obj.Var && d.getKind()!=Obj.Elem && d.getKind()!=Obj.Fld)
+	 								parser.report_error("Greska na liniji "+ assignOpleft +  " sa leve strane operatora = mora biti promenljiva ili element niza", null);
 	 							Struct tip = d.getType();
 	 								if(tip.getKind() == Struct.Array){
 	 								 	if(!e.assignableTo(tip.getElemType()))
-	 								 		parser.report_error("Greska na liniji "+ assignLineleft +  " nekompatibilni tipovi ", null);
+	 								 		parser.report_error("Greska na liniji "+ assignOpleft +  " nekompatibilni tipovi ", null);
 	 								}
 	 								else 
 	 									if(!e.assignableTo(tip))
-	 								 		parser.report_error("Greska na liniji "+ assignLineleft +  " nekompatibilni tipovi", null);
+	 								 		parser.report_error("Greska na liniji "+ assignOpleft +  " nekompatibilni tipovi", null);
 	 								
 	 								
 	 							}
-	 							Code.store(d);
+	 							if(assignOp == 0) Code.store(d);
+	 							else{
+		 							Obj node = new Obj(Obj.Var,"",e);
+		 							Code.store(node);
+		 							if(d.getKind()==Obj.Elem){
+		 								Code.put(Code.dup2);
+		 							}
+		 							Code.load(d);
+		 							Code.load(node);
+		 							Code.put(assignOp);
+		 							Code.store(d);
+	 							}
  						:}
  						|
  						Designator Assignop error
@@ -655,6 +684,7 @@ ActParsList ::= ActParsList COMMA Expr
 	 						 	if(d.getType()!=Tab.intType)
 	 						 		parser.report_error("Sematicka greska na liniji "+plleft+" Operator '++' se primenjuje samo na tip int",null);
 	 						 	else{
+	 						 		if(d.getKind()== Obj.Elem) Code.put(Code.dup2);
 		 						 	Code.load(d);
 		 						 	Code.loadConst(1);
 		 						 	Code.put(Code.add);
@@ -673,6 +703,7 @@ ActParsList ::= ActParsList COMMA Expr
 	 						 	if(d.getType()!=Tab.intType)
 	 						 		parser.report_error("Sematicka greska na liniji "+plleft+" Operator '++' se primenjuje samo na tip int",null);
 	 						 	else{
+	 						 		if(d.getKind()== Obj.Elem) Code.put(Code.dup2);
 		 						 	Code.load(d);
 		 						 	Code.loadConst(1);
 		 						 	Code.put(Code.sub);
@@ -691,21 +722,40 @@ ActParsList ::= ActParsList COMMA Expr
 
 Expr ::= SubExpr:se {: RESULT = se; :};
 
-SubExpr ::= Designator:d AddopRight:ar SubExpr:se
+SubExpr ::= Designator:d
+			{: /*
+				if(d!=null){
+						if(d.getKind() ==Obj.Elem){
+							Code.put(Code.dup2);
+							Code.put(Code.dup2);
+						}
+						Code.load(d);
+					}*/
+			:}
+			 AddopRight:ar SubExpr:se
 			{:
 				if(d!=null && se!=null){
 							Struct tip = d.getType();
 							if(tip.getKind()==Struct.Array) tip = tip.getElemType();
 					   		if(!tip.assignableTo(se)) 
 					   			parser.report_error("nekompatibilni tipovi na liniji "+seleft ,null);
-					     }
-				Obj node = new Obj(Obj.Var, "", Tab.intType);
-					Code.store(node);
-					Code.load(d);
-					Code.load(node);
+					     }/*
 					Code.put(ar);
 					Code.store(d);
-					Code.load(d);
+					Code.load(d);*/
+					Obj node = new Obj(Obj.Var, "", Tab.intType);
+					Code.store(node);
+					if(d!=null){
+						if(d.getKind() ==Obj.Elem){
+							Code.put(Code.dup2);
+							Code.put(Code.dup2);
+						}
+						Code.load(d);
+						Code.load(node);
+						Code.put(ar);
+						Code.store(d);
+						Code.load(d);
+					}
 					
 				RESULT = se;
 			:}
@@ -737,8 +787,12 @@ SubExprLeft ::= SubExprLeft:sel AddopLeft:al Term:t
 Term ::= FactorExpr:fe {: RESULT = fe; :};
 
 
-FactorExpr ::= Designator:d MulopRight:mr FactorExpr:fel
-				{:
+
+
+FactorExpr ::= Designator:d
+				
+				 MulopRight:mr FactorExpr:fel
+				{:	
 					if(d!=null && fel!=null){
 							Struct tip = d.getType();
 							if(tip.getKind()==Struct.Array) tip = tip.getElemType();
@@ -747,11 +801,17 @@ FactorExpr ::= Designator:d MulopRight:mr FactorExpr:fel
 					     }
 					Obj node = new Obj(Obj.Var, "", Tab.intType);
 					Code.store(node);
-					Code.load(d);
-					Code.load(node);
-					Code.put(mr);
-					Code.store(d);
-					Code.load(d);
+					if(d!=null){
+						if(d.getKind() ==Obj.Elem){
+							Code.put(Code.dup2);
+							Code.put(Code.dup2);
+						}
+						Code.load(d);
+						Code.load(node);
+						Code.put(mr);
+						Code.store(d);
+						Code.load(d);
+					}
 					
 					RESULT = fel;
 				  :}
@@ -776,15 +836,16 @@ FactorExprLeft ::= FactorExprLeft:fel MulopLeft:ml Factor:f
 				   {: if(f!=null) RESULT = f; :}
 				   ;
 
-FactorExprOptional ::= LZAG Expr RZAG
-					   |
-					   /* */
-					   ;
+//FactorExprOptional ::= LZAG Expr RZAG
+//					   |
+//					   /* */
+//					   ;
 
 Factor ::= Designator:d 
 		 	{: 			
-		 				if(d.getType().getKind()==Struct.Array) RESULT = d.getType().getElemType();
-					  	else RESULT = d.getType();
+		 				/*if(d.getType().getKind()==Struct.Array) RESULT = d.getType().getElemType();
+					  	else*/
+					  	RESULT = d.getType();
 					  	Code.load(d);
 			:}
 			| 
@@ -815,7 +876,23 @@ Factor ::= Designator:d
 				RESULT = parser.boolType; 
 		   :}
 		   |
-		   NEW Type FactorExprOptional
+		   NEW Type:t LZAG Expr:e RZAG
+		   {:
+		   		if(t!=Tab.intType && t!=Tab.charType && t!=parser.boolType)
+		   			parser.report_error("Greska: nizovi mogu biti samo osnovnih tipova, char, int ili bool",null);
+		   		else{
+			   		if(e!=Tab.intType)
+			   			parser.report_error("Greska: broj elemenata niza mora biti tipa int",null);
+			   		else{
+			   			Code.put(Code.newarray);
+			   			if(t==Tab.charType) Code.put(0);
+			   			else Code.put(1);
+			   		}
+		   		}
+		   			
+		   :}
+		   |
+		   NEW Type
 		   |
 		   LPAREN Expr:e RPAREN {: RESULT = e; :}
 		   ;
@@ -823,12 +900,17 @@ Factor ::= Designator:d
 DesignatorListElement ::= POINT IDENT {: array = null; :}
 						   |
 						  LZAG:lzag
-						  {:	
-						  		if(array==null || array.getType().getKind()!=Struct.Array)
-						  			parser.report_error("Sematicka greska na liniji "+lzagleft +", identifikator nije niz",null);
-						  		else
-						  			Code.load(array);
-						  		array = null;
+						  {:	//33
+						  		if(array!=null){
+						  			RESULT = Tab.noObj;
+							  		if(array.getType().getKind()!=Struct.Array)
+							  			parser.report_error("Sematicka greska na liniji "+lzagleft +", identifikator nije niz",null);
+							  		else{
+							  			Code.load(array);
+							  			RESULT = new Obj(Obj.Elem, "", array.getType().getElemType());	
+							  		}
+							  		array = null;
+						  		}
 						  :}
 						   Expr:e RZAG:rzag
 						  {:	
@@ -837,16 +919,17 @@ DesignatorListElement ::= POINT IDENT {: array = null; :}
 						  :}
 						  ;
 
-DesignatorList ::=  DesignatorList DesignatorListElement
+DesignatorList ::=  DesignatorList DesignatorListElement:dle {: RESULT = dle; :}
 					|
-					DesignatorListElement
+					DesignatorListElement:dle {:  RESULT = dle;	:}
 					;
 					
 
-Designator ::= IDENT:varName DesignatorList
+Designator ::= IDENT:varName {: array =  parser.checkExistence(varNameleft, varName); :}
+			   DesignatorList:dl
 			    {: 
-			    	array =  parser.checkExistence(varNameleft, varName);
-			   		RESULT = array;
+			    	//array =  parser.checkExistence(varNameleft, varName);
+			   		RESULT = dl;
 		
 			    :}
 				|
@@ -876,7 +959,7 @@ Designator ::= IDENT:varName DesignatorList
  Condition ::= CondTermList;
  
  
- Assignop ::= EQUAL
+ Assignop ::= EQUAL			  {: RESULT = 0;	:}
  			  |
  			  AddopRight:ar	  {: RESULT = ar;	:}
  			  |
