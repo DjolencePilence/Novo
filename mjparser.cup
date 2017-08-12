@@ -65,6 +65,7 @@ parser code {:
 	   		else{
 	   			printSymbol(numLine, varIdent, node);
 	   		}
+	   		if(node.getKind() == Struct.Array) node = new Obj(Obj.Elem, "", node.getType().getElemType());
 	   		return node;
    	}
    
@@ -124,7 +125,7 @@ action code {:
 	boolean returnFound = false;
 	Scope mainScope = null;
 	boolean hasArguments= true;
-	Obj lastDesignator = null;
+	Obj array = null;
 :}
 
 
@@ -564,8 +565,28 @@ Statement ::= DesignatorStatement SEMI
 			  |
 			  RETURN SEMI
 			  |
-			  READ LPAREN Designator RPAREN SEMI
-			  {:if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;:}
+			  READ LPAREN Designator:d RPAREN SEMI
+			  {:
+			  		if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;
+			  		
+			  		int kind = d.getKind();
+				 	if(kind != Obj.Elem && kind != Obj.Var && kind!=Obj.Fld)
+				 		parser.report_error("Semanticka greska na liniji "+dleft+ ", pogresan operand za READ ",null);
+			  		Struct tip = d.getType();
+			  		if(tip.getKind() == Struct.Array) tip = tip.getElemType();
+			  		if(tip == parser.boolType || tip == Tab.intType){
+			  			Code.put(Code.read);
+			  			Code.store(d);
+			  		}
+			  		else {
+				  		if(tip == Tab.charType){
+				  			Code.put(Code.bread);
+				  			Code.store(d);
+				  		}
+				  		else
+				  			parser.report_error("Semanticka greska na liniji "+dleft+ ", pogresan tip operanda za READ ",null);
+			  		}
+			  :}
 			  |
 			  PRINT LPAREN Expr:e RPAREN SEMI
 			  {:
@@ -574,7 +595,7 @@ Statement ::= DesignatorStatement SEMI
 			  	 		parser.report_error("Semanticka greska na liniji " + eleft + ": Operand instrukcije PRINT mora biti char, bool ili int tipa", null);
 				  	 
 				  	 if (e == Tab.intType || e==parser.boolType) {
-				  	 	Code.loadConst(5);
+				  	 	Code.loadConst(4);
 				  	 	Code.put(Code.print);
 				  	 }
 				  	 
@@ -624,9 +645,42 @@ ActParsList ::= ActParsList COMMA Expr
  						|
  						 Designator LPAREN ActPars RPAREN
  						|
- 						 Designator PLUSPLUS
+ 						 Designator:d PLUSPLUS:pl
+ 						 {:	
+ 						 	RESULT = d;
+ 						 	int kind = d.getKind();
+ 						 	if(kind != Obj.Elem && kind != Obj.Var && kind!=Obj.Fld)
+ 						 		parser.report_error("Semanticka greska na liniji "+plleft+ " nedozvoljen upis",null);
+ 						 	else{
+	 						 	if(d.getType()!=Tab.intType)
+	 						 		parser.report_error("Sematicka greska na liniji "+plleft+" Operator '++' se primenjuje samo na tip int",null);
+	 						 	else{
+		 						 	Code.load(d);
+		 						 	Code.loadConst(1);
+		 						 	Code.put(Code.add);
+		 						 	Code.store(d);
+		 						 	}	
+ 						 	}
+ 						 :}
  						|
- 						 Designator MINUSMINUS;
+ 						 Designator:d MINUSMINUS:pl
+ 						 {:
+ 						 	RESULT = d;
+ 						 	int kind = d.getKind();
+ 						 	if(kind != Obj.Elem && kind != Obj.Var && kind!=Obj.Fld)
+ 						 		parser.report_error("Semanticka greska na liniji "+plleft+ " nedozvoljen upis",null);
+ 						 	else{
+	 						 	if(d.getType()!=Tab.intType)
+	 						 		parser.report_error("Sematicka greska na liniji "+plleft+" Operator '++' se primenjuje samo na tip int",null);
+	 						 	else{
+		 						 	Code.load(d);
+		 						 	Code.loadConst(1);
+		 						 	Code.put(Code.sub);
+		 						 	Code.store(d);
+		 						 	}	
+ 						 	}
+ 						 :}
+ 						 ;
  
  RelExprOptional ::= Relop Expr
  					|
@@ -766,12 +820,20 @@ Factor ::= Designator:d
 		   LPAREN Expr:e RPAREN {: RESULT = e; :}
 		   ;
 
-DesignatorListElement ::= POINT IDENT:varName
-						  {: :}
+DesignatorListElement ::= POINT IDENT {: array = null; :}
 						   |
-						  LZAG Expr:e RZAG
-						  {:
-						  
+						  LZAG:lzag
+						  {:	
+						  		if(array==null || array.getType().getKind()!=Struct.Array)
+						  			parser.report_error("Sematicka greska na liniji "+lzagleft +", identifikator nije niz",null);
+						  		else
+						  			Code.load(array);
+						  		array = null;
+						  :}
+						   Expr:e RZAG:rzag
+						  {:	
+						  		if(e!=Tab.intType)
+						  			parser.report_error("Sematicka greska na liniji "+rzagleft +", Indeks niza mora biti tipa int",null);
 						  :}
 						  ;
 
@@ -783,7 +845,9 @@ DesignatorList ::=  DesignatorList DesignatorListElement
 
 Designator ::= IDENT:varName DesignatorList
 			    {: 
-			   		RESULT = parser.checkExistence(varNameleft, varName);
+			    	array =  parser.checkExistence(varNameleft, varName);
+			   		RESULT = array;
+		
 			    :}
 				|
 			   IDENT:varName {:
