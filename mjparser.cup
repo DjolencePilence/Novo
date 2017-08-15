@@ -2,10 +2,11 @@ package rs.ac.bg.etf.pp1;
 import java_cup.runtime.*;
 //import java.io.*;
 import org.apache.log4j.*;
-import java.util.Stack;
+//import java.util.Stack;
 import rs.etf.pp1.symboltable.Tab;
 import rs.etf.pp1.symboltable.concepts.*;
 import rs.etf.pp1.mj.runtime.Code;
+import java.util.*;
 
 parser code {:
 	
@@ -48,15 +49,16 @@ parser code {:
    		int kind = node.getType().getKind();
    		String tip = stringKind(kind);
    		if(kind ==3) tip += stringKind(node.getType().getElemType().getKind());
-   		if(node.getLevel()==0){
+   
 			if(node.getKind()== Obj.Con)
 				report_info("Pretraga na " + numLine + "("+varIdent+"), nadjeno Con " + varIdent +" " + tip+ ", "+node.getAdr() +","+node.getLevel(), null);
-			else
+			if(node.getKind()== Obj.Var)
 				report_info("Pretraga na " + numLine + "("+varIdent+"), nadjeno Var " + varIdent +" " + tip+ ", "+node.getAdr() +","+node.getLevel(), null);
-			}
-		else
-			report_info("Pretraga na " + numLine + "("+varIdent+"), nadjeno Var " + varIdent +" " + tip+ ", "+node.getAdr() +","+node.getLevel(), null);
-   			
+			if(node.getKind()== Obj.Meth)
+				report_info("Pretraga na " + numLine + "("+varIdent+"), nadjeno Func " + varIdent +" " + tip+ ", "+node.getAdr() +","+node.getLevel(), null);
+			if(node.getKind()== Obj.Elem)
+				report_info("Pretraga na " + numLine + "("+varIdent+"), nadjeno Elem " + varIdent +" " + tip+ ", "+node.getAdr() +","+node.getLevel(), null);
+		
    	}
    	public Obj checkExistence(int numLine, String varIdent){
    			Obj node = Tab.find(varIdent);
@@ -65,7 +67,7 @@ parser code {:
 	   		else{
 	   			printSymbol(numLine, varIdent, node);
 	   		}
-	   		if(node.getKind() == Struct.Array) node = new Obj(Obj.Elem, "", node.getType().getElemType());
+	   		//if(node.getType().getKind() == Struct.Array) node = new Obj(Obj.Elem, "", node.getType().getElemType());
 	   		return node;
    	}
    
@@ -126,6 +128,13 @@ action code {:
 	Scope mainScope = null;
 	boolean hasArguments= true;
 	Obj array = null;
+	
+	HashMap<String, ArrayList<Struct>> functions = new HashMap<String, ArrayList<Struct>> ();
+	boolean isFormParArray = false;
+	Obj calledMethod = null;
+	Integer currentIndex = 0;
+	Integer numLocalParam = 0;
+	Stack<Integer> indexes = new Stack<Integer> ();
 :}
 
 
@@ -437,12 +446,24 @@ FormalParamList ::= FormalParamList COMMA FormalParam
 					{:parser.numFormParam++; :}
 					;
 
-FormVarDeclZag ::= LZAG RZAG
+FormVarDeclZag ::= LZAG RZAG {: isFormParArray = true; :}
 				 |
-				 /*	epsilon */
+				 /*	epsilon */ {: isFormParArray = false; :}
 				 ;
 
-FormalParam ::= Type IDENT FormVarDeclZag
+FormalParam ::= Type:t IDENT:id FormVarDeclZag
+				{:	
+					if(!parser.insideOfClass){
+						Struct tip = null;
+						if(isFormParArray) tip = new Struct( Struct.Array , t);
+						else tip = t;
+						ArrayList<Struct> list = functions.get(currentMethod.getName());
+						if(list!=null) list.add(t);
+						else parser.report_error(" smor",null);
+						Tab.insert(Obj.Var, id, tip);
+						numLocalParam++;	
+					}
+				:}
 				|
 				error;
  							
@@ -462,6 +483,7 @@ MethodDecl ::= StaticOptional RetValue:retVal IDENT:name
 			   		if(parser.isStaticFunc && Tab.currentScope == mainScope) 
 			   			parser.report_error("Globalna funkcija ne sme biti static", null);
 			   		currentMethod = Tab.insert(Obj.Meth, name, retVal);
+			   		functions.put(name, new ArrayList<Struct>());
 			   		returnValue = null;
 			   		Tab.openScope();
 			   		parser.report_info("Obradjuje se funkcija "+name+" na liniji "+nameleft,null);
@@ -473,13 +495,13 @@ MethodDecl ::= StaticOptional RetValue:retVal IDENT:name
 			  :} 
 			  VarDeclListOptional
 			  LBRACE 
-			  {: 
+			  {: 	
 			   		currentMethod.setAdr(Code.pc);
 			   		if ("main".equals(name)) {
 			   			Code.mainPc = currentMethod.getAdr();
 			   		}
 			   		Code.put(Code.enter);
-			   		Code.put(currentMethod.getLevel());
+			   		Code.put(numLocalParam); currentMethod.setLevel(numLocalParam);
 			   		Code.put(Tab.currentScope().getnVars());
 			   :}
 			  StatementList RBRACE
@@ -489,13 +511,20 @@ MethodDecl ::= StaticOptional RetValue:retVal IDENT:name
 			   		parser.stack.pop();
 			   		if(!parser.insideOfClass) parser.numGlobFunc++;
 			   		
-			   		Code.put(Code.exit);
-				 	Code.put(Code.return_);
+			   		if(currentMethod.getType() == Tab.noType){
+				   		Code.put(Code.exit);
+					 	Code.put(Code.return_);
+				 	}
+				 	else {
+				 		Code.put(Code.trap);
+				 		Code.put(1);
+				 	}
 			   		
 					Tab.chainLocalSymbols(currentMethod);
 					Tab.closeScope();
 					currentMethod = null;
-					returnFound = false;			   	
+					returnFound = false;
+					numLocalParam = 0;			   	
 			   :};
 // METHOD END --------------------------------------------------------
 // CLASSES END -------------------------------------------------------
@@ -564,10 +593,17 @@ Statement ::= DesignatorStatement SEMI
 				 Struct currMethType = currentMethod.getType();
 				 if (t!=null && !currMethType.assignableTo(t)) {
 				 	parser.report_error("Greska na liniji " + tleft + " : " + "tip izraza u return naredbi ne slaze se sa tipom povratne vrednosti funkcije " + currentMethod.getName(), null);
-				 }	
+				 }
+				Code.put(Code.exit);
+				Code.put(Code.return_);
+				 	
 			  :}
 			  |
 			  RETURN SEMI
+			  {:
+			  	Code.put(Code.exit);
+				Code.put(Code.return_);
+			  :}
 			  |
 			  READ LPAREN Designator:d RPAREN SEMI
 			  {:
@@ -631,14 +667,37 @@ Statement ::= DesignatorStatement SEMI
 			  LBRACE StatementList RBRACE;
 
 ActPars ::= ActParsList
-			{: if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++; :}
+			{: 
+				if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++;
+			:}
 			|
 			/* */
 			{: if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++; :}
 			;
-ActParsList ::= ActParsList COMMA Expr
+ActParsList ::= ActParsList COMMA Expr:e
+				{:	
+					if(calledMethod!=Tab.noObj){
+						ArrayList<Struct> list = functions.get(calledMethod.getName());
+						if(currentIndex >= list.size())
+							parser.report_error("Pogresan broj argumenata na liniji "+eleft, null);
+						else
+							if(!e.assignableTo(list.get(currentIndex++)))
+								parser.report_error("Pogresan tip argumenta na liniji "+eleft, null);
+					}
+				:}
 				|
-				Expr;
+				Expr:e
+				{:	//123
+					if(calledMethod!=Tab.noObj){
+						ArrayList<Struct> list = functions.get(calledMethod.getName());
+						if(currentIndex >= list.size())
+							parser.report_error("Pogresan broj argumenata na liniji "+eleft, null);
+						else
+							if(!e.assignableTo(list.get(currentIndex++)))
+								parser.report_error("Pogresan tip argumenta na liniji "+eleft, null);
+					}
+				:}
+				;
 
 
 // Dodavanje zbog greske prilikom dodele			  
@@ -677,7 +736,24 @@ ActParsList ::= ActParsList COMMA Expr
  						|
  						Designator Assignop error
  						|
- 						 Designator LPAREN ActPars RPAREN
+ 						 Designator:d
+ 						 {:	calledMethod = d; 
+ 						 	if(d.getKind()!=Obj.Meth)
+ 						 		parser.report_error("Greska ime " + d.getName() + " nije funkcija",null );
+ 						  currentIndex = 0; 
+ 						 :}
+ 						 LPAREN ActPars RPAREN
+ 						 {:
+ 						 	if(currentIndex!= functions.get(d.getName()).size())
+ 						 		parser.report_error("Pogresan broj argumenata funkcije na liniji "+dleft, null);
+ 						 	else{
+	 						 	int dest_adr = d.getAdr() - Code.pc;
+	 						 	Code.put(Code.call);
+	 						 	Code.put2(dest_adr);
+	 						 	if(calledMethod.getType() != Tab.noType) Code.put(Code.pop);
+	 						 	currentIndex = 0; //calledMethod = null;
+ 						 	}
+ 						 :}
  						|
  						 Designator:d PLUSPLUS:pl
  						 {:	
@@ -833,7 +909,24 @@ Factor ::= Designator:d
 					  	Code.load(d);
 			:}
 			| 
-		   Designator LPAREN ActPars RPAREN
+		   Designator:d
+		   {:	calledMethod = d; 
+ 				if(d.getKind()!=Obj.Meth)
+ 					parser.report_error("Greska ime " + d.getName() + " nije funkcija",null );
+ 				currentIndex = 0; 
+ 			:}
+ 			LPAREN ActPars RPAREN
+ 			{:
+ 				if(currentIndex!= functions.get(d.getName()).size())
+			 		parser.report_error("Pogresan broj argumenata funkcije na liniji desno"+dleft, null);
+			 	else{
+				 	int dest_adr = d.getAdr() - Code.pc;
+				 	Code.put(Code.call);
+				 	Code.put2(dest_adr);
+				 	currentIndex = 0; //calledMethod = null;
+			 	}
+			 	RESULT = d.getType();
+ 			:}
 			|
 		   NUMBER:i 
 		   {:	
@@ -885,6 +978,8 @@ DesignatorListElement ::= POINT IDENT {: array = null; :}
 						  LZAG:lzag
 						  {:	
 						  		if(array!=null){
+						  			if(array == Tab.noObj)
+						  				parser.report_error("Sematicka greska na liniji "+lzagleft +", niz nije definisan",null);
 						  			RESULT = Tab.noObj;
 							  		if(array.getType().getKind()!=Struct.Array)
 							  			parser.report_error("Sematicka greska na liniji "+lzagleft +", identifikator nije niz",null);
@@ -908,7 +1003,7 @@ DesignatorList ::=  DesignatorList DesignatorListElement:dle {: RESULT = dle; :}
 					;
 					
 
-Designator ::= IDENT:varName {: array =  parser.checkExistence(varNameleft, varName); :}
+Designator ::= IDENT:varName {: array = Tab.find(varName); :}
 			   DesignatorList:dl
 			    {: 
 			   		RESULT = dl;
@@ -918,7 +1013,6 @@ Designator ::= IDENT:varName {: array =  parser.checkExistence(varNameleft, varN
 			   IDENT:varName {:
 			   		numLine = varNameleft;
 			   		varIdent = varName;
-			   		
 			   		RESULT = parser.checkExistence(numLine, varIdent);
 			   	:};
 
@@ -960,18 +1054,13 @@ Designator ::= IDENT:varName {: array =  parser.checkExistence(varNameleft, varN
  				ME			  {: RESULT = Code.rem; :}
  				;
  				
-// Addop ::= AddopRight
-// 			|
-// 		   AddopLeft;
+
  
  AddopLeft ::= PLUS		{: RESULT = Code.add; :}
  				|
  			   MINUS	{: RESULT = Code.sub; :} 
  			   ;
  			   
- //Mulop ::= MulopLeft
- //		   |
- //		   MulopRight;
  		   
  MulopLeft ::= MULTIPLY {: RESULT = Code.mul; :}
  			   |
