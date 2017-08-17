@@ -675,7 +675,7 @@ ActPars ::= ActParsList
 			{: if("main".equals(parser.stack.peek())) parser.numFuncCallsInMain++; :}
 			;
 ActParsList ::= ActParsList COMMA Expr:e
-				{:	
+				{:	currentIndex = indexes.pop();
 					if(calledMethod!=Tab.noObj){
 						ArrayList<Struct> list = functions.get(calledMethod.getName());
 						if(currentIndex >= list.size())
@@ -684,10 +684,11 @@ ActParsList ::= ActParsList COMMA Expr:e
 							if(!e.assignableTo(list.get(currentIndex++)))
 								parser.report_error("Pogresan tip argumenta na liniji "+eleft, null);
 					}
+					indexes.push(currentIndex);
 				:}
 				|
 				Expr:e
-				{:	//123
+				{:	currentIndex = indexes.pop();
 					if(calledMethod!=Tab.noObj){
 						ArrayList<Struct> list = functions.get(calledMethod.getName());
 						if(currentIndex >= list.size())
@@ -696,6 +697,7 @@ ActParsList ::= ActParsList COMMA Expr:e
 							if(!e.assignableTo(list.get(currentIndex++)))
 								parser.report_error("Pogresan tip argumenta na liniji "+eleft, null);
 					}
+					indexes.push(currentIndex);
 				:}
 				;
 
@@ -737,13 +739,13 @@ ActParsList ::= ActParsList COMMA Expr:e
  						Designator Assignop error
  						|
  						 Designator:d
- 						 {:	calledMethod = d; 
+ 						 {:	calledMethod = d; indexes.push(new Integer(0));
  						 	if(d.getKind()!=Obj.Meth)
  						 		parser.report_error("Greska ime " + d.getName() + " nije funkcija",null );
  						  currentIndex = 0; 
  						 :}
  						 LPAREN ActPars RPAREN
- 						 {:
+ 						 {:	currentIndex = indexes.pop();
  						 	if(currentIndex!= functions.get(d.getName()).size())
  						 		parser.report_error("Pogresan broj argumenata funkcije na liniji "+dleft, null);
  						 	else{
@@ -910,13 +912,13 @@ Factor ::= Designator:d
 			:}
 			| 
 		   Designator:d
-		   {:	calledMethod = d; 
+		   {:	calledMethod = d; indexes.push(new Integer(0));
  				if(d.getKind()!=Obj.Meth)
  					parser.report_error("Greska ime " + d.getName() + " nije funkcija",null );
  				currentIndex = 0; 
  			:}
  			LPAREN ActPars RPAREN
- 			{:
+ 			{:	currentIndex = indexes.pop();
  				if(currentIndex!= functions.get(d.getName()).size())
 			 		parser.report_error("Pogresan broj argumenata funkcije na liniji desno"+dleft, null);
 			 	else{
