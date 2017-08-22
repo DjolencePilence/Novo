@@ -169,6 +169,7 @@ non terminal Struct  Expr, Factor, Term;
 non terminal Struct FactorExpr, FactorExprLeft;
 non terminal Struct SubExpr, SubExprLeft;
 non terminal Integer AddopLeft, AddopRight, MulopLeft, MulopRight, Assignop;
+non terminal Integer ArithmeticRight;
 
 precedence left ELSE;
 
@@ -705,6 +706,11 @@ ActParsList ::= ActParsList COMMA Expr:e
 // Dodavanje zbog greske prilikom dodele			  
  DesignatorStatement ::= Designator:d Assignop:assignOp
  						{:	
+ 							if(assignOp != 0) {
+								if(d.getKind() == Obj.Elem)
+									Code.put(Code.dup2);
+								Code.load(d);
+							}
  						:}
  						 Expr:e
  						{: 
@@ -721,7 +727,7 @@ ActParsList ::= ActParsList COMMA Expr:e
 	 								 		parser.report_error("Greska na liniji "+ assignOpleft +  " nekompatibilni tipovi", null);
 	 								
 	 								
-	 							}
+	 							}/* stari kod
 	 							if(assignOp == 0) Code.store(d);
 	 							else{
 		 							Obj node = new Obj(Obj.Var,"",e);
@@ -733,7 +739,15 @@ ActParsList ::= ActParsList COMMA Expr:e
 		 							Code.load(node);
 		 							Code.put(assignOp);
 		 							Code.store(d);
-	 							}
+	 							}*/
+	 							if(assignOp == 0) Code.store(d);
+	 							else{
+		 							Obj node = new Obj(Obj.Var,"",e);
+		 							Code.store(node);
+		 							Code.load(node);
+		 							Code.put(assignOp);
+		 							Code.store(d);
+		 						}
  						:}
  						|
  						Designator Assignop error
@@ -805,7 +819,20 @@ ActParsList ::= ActParsList COMMA Expr:e
 
 Expr ::= SubExpr:se {: RESULT = se; :};
 
-SubExpr ::= Designator:d AddopRight:ar SubExpr:se
+ArithmeticRight ::= AddopRight:ar {: RESULT = ar; :}
+					|
+					MulopRight:mr  {: RESULT = mr; :}
+					;
+
+SubExpr ::= Designator:d
+			{:
+				if(d.getKind() == Obj.Elem) {
+							Code.put(Code.dup2);
+							Code.put(Code.dup2);
+						}
+						Code.load(d);
+			:}
+			 ArithmeticRight:ar SubExpr:se
 			{:
 				if(d!=null && se!=null){
 							Struct tip = d.getType();
@@ -815,12 +842,12 @@ SubExpr ::= Designator:d AddopRight:ar SubExpr:se
 					     }
 					Obj node = new Obj(Obj.Var, "", Tab.intType);
 					Code.store(node);
-					if(d!=null){
+					if(d!=null){/*
 						if(d.getKind() ==Obj.Elem){
 							Code.put(Code.dup2);
 							Code.put(Code.dup2);
 						}
-						Code.load(d);
+						Code.load(d);*/
 						Code.load(node);
 						Code.put(ar);
 						Code.store(d);
@@ -859,31 +886,7 @@ Term ::= FactorExpr:fe {: RESULT = fe; :};
 
 
 
-FactorExpr ::= Designator:d MulopRight:mr FactorExpr:fel
-				{:	
-					if(d!=null && fel!=null){
-							Struct tip = d.getType();
-							if(tip.getKind()==Struct.Array) tip = tip.getElemType();
-					   		if(!tip.assignableTo(fel)) 
-					   			parser.report_error("nekompatibilni tipovi na liniji "+felleft ,null);
-					     }
-					Obj node = new Obj(Obj.Var, "", Tab.intType);
-					Code.store(node);
-					if(d!=null){
-						if(d.getKind() ==Obj.Elem){
-							Code.put(Code.dup2);
-							Code.put(Code.dup2);
-						}
-						Code.load(d);
-						Code.load(node);
-						Code.put(mr);
-						Code.store(d);
-						Code.load(d);
-					}
-					
-					RESULT = fel;
-				  :}
-				|
+FactorExpr ::= 
 				FactorExprLeft:fel
 				{:
 					RESULT = fel;
