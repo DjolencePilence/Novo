@@ -135,6 +135,7 @@ action code {:
 	Integer currentIndex = 0;
 	Integer numLocalParam = 0;
 	Stack<Integer> indexes = new Stack<Integer> ();
+	Stack<Obj> methods = new Stack<Obj>();
 :}
 
 
@@ -460,7 +461,7 @@ FormalParam ::= Type:t IDENT:id FormVarDeclZag
 						else tip = t;
 						ArrayList<Struct> list = functions.get(currentMethod.getName());
 						if(list!=null) list.add(t);
-						else parser.report_error(" smor",null);
+						else parser.report_error(" Greska kod formalnih parametara",null);
 						Tab.insert(Obj.Var, id, tip);
 						numLocalParam++;	
 					}
@@ -502,7 +503,7 @@ MethodDecl ::= StaticOptional RetValue:retVal IDENT:name
 			   			Code.mainPc = currentMethod.getAdr();
 			   		}
 			   		Code.put(Code.enter);
-			   		Code.put(numLocalParam); currentMethod.setLevel(numLocalParam);
+			   		Code.put(numLocalParam); currentMethod.setLevel(numLocalParam); 
 			   		Code.put(Tab.currentScope().getnVars());
 			   :}
 			  StatementList RBRACE
@@ -677,6 +678,7 @@ ActPars ::= ActParsList
 			;
 ActParsList ::= ActParsList COMMA Expr:e
 				{:	currentIndex = indexes.pop();
+					calledMethod = methods.pop();
 					if(calledMethod!=Tab.noObj){
 						ArrayList<Struct> list = functions.get(calledMethod.getName());
 						if(currentIndex >= list.size())
@@ -685,11 +687,13 @@ ActParsList ::= ActParsList COMMA Expr:e
 							if(!e.assignableTo(list.get(currentIndex++)))
 								parser.report_error("Pogresan tip argumenta na liniji "+eleft, null);
 					}
+					methods.push(calledMethod);
 					indexes.push(currentIndex);
 				:}
 				|
 				Expr:e
 				{:	currentIndex = indexes.pop();
+					calledMethod = methods.pop();
 					if(calledMethod!=Tab.noObj){
 						ArrayList<Struct> list = functions.get(calledMethod.getName());
 						if(currentIndex >= list.size())
@@ -698,6 +702,7 @@ ActParsList ::= ActParsList COMMA Expr:e
 							if(!e.assignableTo(list.get(currentIndex++)))
 								parser.report_error("Pogresan tip argumenta na liniji "+eleft, null);
 					}
+					methods.push(calledMethod);
 					indexes.push(currentIndex);
 				:}
 				;
@@ -742,9 +747,6 @@ ActParsList ::= ActParsList COMMA Expr:e
 	 							}*/
 	 							if(assignOp == 0) Code.store(d);
 	 							else{
-		 							Obj node = new Obj(Obj.Var,"",e);
-		 							Code.store(node);
-		 							Code.load(node);
 		 							Code.put(assignOp);
 		 							Code.store(d);
 		 						}
@@ -840,15 +842,15 @@ SubExpr ::= Designator:d
 					   		if(!tip.assignableTo(se)) 
 					   			parser.report_error("nekompatibilni tipovi na liniji "+seleft ,null);
 					     }
-					Obj node = new Obj(Obj.Var, "", Tab.intType);
-					Code.store(node);
+					//Obj node = new Obj(Obj.Var, "", Tab.intType);
+					//Code.store(node);
 					if(d!=null){/*
 						if(d.getKind() ==Obj.Elem){
 							Code.put(Code.dup2);
 							Code.put(Code.dup2);
 						}
 						Code.load(d);*/
-						Code.load(node);
+						//Code.load(node);
 						Code.put(ar);
 						Code.store(d);
 						Code.load(d);
@@ -899,7 +901,21 @@ FactorExprLeft ::= FactorExprLeft:fel MulopLeft:ml Factor:f
 					   if(f!=null && fel!=null){
 					   		if(!f.assignableTo(fel)) parser.report_error("nekompatibilni tipovi na liniji "+felleft,null);
 					     }
-					     Code.put(ml); 
+					     if(ml!=Code.rem) Code.put(ml);
+					     else{
+					     Obj node2 = new Obj(Obj.Var, "drugi", Tab.intType);
+						
+						 Code.store(node2);
+						 Code.put(Code.dup);
+						 Code.put(Code.mul);
+						 Code.load(node2);
+						 Code.load(node2);
+						 Code.put(Code.mul);
+						 Code.loadConst(3);
+						 Code.put(Code.mul);
+						 Code.put(Code.add);
+					     
+					     } 
 					     RESULT = f;
 				    :}
 					|
@@ -916,12 +932,15 @@ Factor ::= Designator:d
 			| 
 		   Designator:d
 		   {:	calledMethod = d; indexes.push(new Integer(0));
+		   		methods.push(calledMethod);
  				if(d.getKind()!=Obj.Meth)
  					parser.report_error("Greska ime " + d.getName() + " nije funkcija",null );
  				currentIndex = 0; 
  			:}
  			LPAREN ActPars RPAREN
  			{:	currentIndex = indexes.pop();
+ 				methods.pop();
+ 				String ime = d.getName();
  				if(currentIndex!= functions.get(d.getName()).size())
 			 		parser.report_error("Pogresan broj argumenata funkcije na liniji desno"+dleft, null);
 			 	else{
